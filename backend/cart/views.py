@@ -12,7 +12,7 @@ from django.db import transaction
 
 
 # =========================
-# ADD TO CART
+# ADD TO CART (FIXED)
 # =========================
 class AddToCart(APIView):
     permission_classes = [IsAuthenticated]
@@ -24,10 +24,11 @@ class AddToCart(APIView):
         product_id = request.data.get('product') or request.data.get('product_id')
         quantity = int(request.data.get('quantity', 1))
 
+        # ❌ VALIDATIONS
         if not product_id:
             return Response(
                 {"error": True, "message": "Product required"},
-                status=400
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         try:
@@ -35,46 +36,53 @@ class AddToCart(APIView):
         except Product.DoesNotExist:
             return Response(
                 {"error": True, "message": "Product not found"},
-                status=404
+                status=status.HTTP_404_NOT_FOUND
             )
 
         if quantity <= 0:
             return Response(
                 {"error": True, "message": "Invalid quantity"},
-                status=400
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         if quantity > product.stock:
             return Response(
                 {"error": True, "message": "Not enough stock"},
-                status=400
+                status=status.HTTP_400_BAD_REQUEST
             )
 
+        # ✅ GET OR CREATE CART
         cart, _ = Cart.objects.get_or_create(user=user)
 
-        # ✅ prevent duplicate rows
+        # ✅ GET OR CREATE ITEM
         cart_item, created = CartItem.objects.get_or_create(
             cart=cart,
             product=product,
             defaults={"quantity": 0}
         )
 
-        # ✅ increment quantity safely
+        # ✅ SAFE INCREMENT
         cart_item.quantity = F("quantity") + quantity
         cart_item.save()
 
-        # 🔥 refresh from DB to get actual value
+        # ✅ GET ACTUAL VALUE
         cart_item.refresh_from_db()
 
+        # ✅ RETURN FULL STRUCTURE (IMPORTANT FIX)
         return Response({
-            "error": False,
-            "message": "Added to cart",
-            "quantity": cart_item.quantity   # optional (good for frontend)
-        }, status=200)
+            "id": cart_item.id,
+            "product": {
+                "id": product.id,
+                "name": product.name,
+                "price": product.price,
+                "image": request.build_absolute_uri(product.image.url) if product.image else None,
+            },
+            "quantity": cart_item.quantity
+        }, status=status.HTTP_200_OK)
 
 
 # =========================
-# VIEW CART (FIXED IMAGE SUPPORT)
+# VIEW CART
 # =========================
 class ViewCart(APIView):
     permission_classes = [IsAuthenticated]
@@ -82,7 +90,6 @@ class ViewCart(APIView):
     def get(self, request):
         cart, _ = Cart.objects.get_or_create(user=request.user)
 
-        # ✅ IMPORTANT FIX (image will work)
         serializer = CartSerializer(cart, context={'request': request})
 
         return Response(serializer.data, status=status.HTTP_200_OK)
